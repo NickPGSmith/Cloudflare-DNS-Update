@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+#
+# Check public IP address and update Cloudflare DNS record(s) if needed.
+#
+# Create keys from the Cloudflare dashboard -> My Profile -> API Tokens
+# API Ref: https://developers.cloudflare.com/api/
+#
+# curl "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+#   -H "Content-Type:application/json" -H "Authorization: Bearer <API_TOKEN>"
+# curl -X GET "https://api.cloudflare.com/client/v4/zones/<zone_id>dns_records" \
+#   -H "Content-Type:application/json" -H "Authorization: Bearer <API_TOKEN>"
+#
+# V0.1      2024-06-14      Updated for use with CloudFlare
+#
+
+
+import argparse
+import configparser
+import ipaddress
+import logging
+import os
+import re
+import requests
+import time
+
+
+VERSION = '0.1'
+DESCRIPTION = 'Checks the current A and/or AAAA DNS records and uses the ' \
+              'Cloudflare REST API to update those records if needed.'
+EPILOG = 'This program is released in the public domain.'
+API_BASE = 'https://api.cloudflare.com/client/v4'
+
+
+logfile = os.path.realpath(__file__) + '.log'
+logger = logging.getLogger(__name__)
+logging.basicConfig(filename=logfile, format='%(asctime)s %(module)s: %(levelname)s %(message)s', level=logging.INFO)
+logging.getLogger('requests').setLevel(logging.WARNING)
+
+
+def lookup(type: str, url: str, ip_regex: str) -> str:
+    '''Lookup public IP address and return it. On failure, thows ValueError'''
+    
+    ip = ''
+    try:
+        response = requests.get(url)
+    except requests.exceptions.ConnectionError as err:
+        raise ValueError(str(err))
+    if response.status_code != 200:
+        raise ValueError(f'Got response code {response.status_code}')
+    ip = response.content.decode()
+    logger.debug(f'Public {type} lookup from {url} returned raw data: {ip}')
+
+    try:
+        ip = re.search(ip_regex, ip).group(1)
+    except re.error as err:
+        raise ValueError(f'bad IP extraction regex: {str(err)}')
+
+    try:
+        if type == 'A':
+            test_ip = ipaddress.IPv4Address(ip)
+        elif type == 'AAAA':
+            test_ip = ipaddress.IPv6Address(ip)
+        else:
+            logger.warning(f'Unknown DNS record type {type}.')
+    except ipaddress.AddressValueError as err:
+        raise ValueError(str(err))
+
+    return ip
+
+
+def main() -> int:
+    logger.info('Initialising...')
+    parser = argparse.ArgumentParser(description=DESCRIPTION, epilog=EPILOG)
+    parser.add_argument('-l', '--loop_delay', action='store', type=int,
+                        help='number of mins to delay in a loop')
+    parser.add_argument('-d', '--debug', action='store_true', help='turn on debug logging')
+    parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {VERSION}')
+    args = parser.parse_args()
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+        logger.debug('Logging set to debug.')
+    
+    conf = configparser.ConfigParser()
+    section = 'Main'
+    while True:
+        logger.info('Starting loop.')
+        conf.read(os.path.realpath(__file__) + '.conf')
+        key = conf[section]['key']
+        zone_id = conf[section]['zone_id']
+        domain = conf[section]['domain']
+        force_update = conf[section]['force_update'] == 'yes'
+        
+        # Get all DNS records
+        headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {key}'}
+        session = requests.Session()
+        session.headers.update(headers)
+        response, dns_records = None, []
+        try:
+            response = session.get(f'{API_BASE}/zones/{zone_id}/dns_records')
+        except requests.exceptions.ConnectionError as err:
+            logger.error(f'Failed to get DNS entries: {str(err)}')
+        else:
+            if response.content:
+                logger.debug(response.content.decode())
+            if response.status_code != 200:
+                logger.error(f'Failed to get DNS entries: error code {response.status_code}.')
+            if response.content and response.status_code == 200:
+                dns_records = response.json()['result']
+        
+        for dns_record in dns_records:
+            logger.debug(f'{dns_record['id']} | {dns_record['type']} | {dns_record['zone_name']} | {dns_record['content']}')
+            dns_record_type = dns_record['type']
+            if dns_record_type not in ['A', 'AAAA']:
+                continue
+            if dns_record['zone_name'] != domain:
+                logger.info(f'Domain {dns_record['zone_name']} in {dns_record_type} record in does not match {domain}.')
+                continue
+            if dns_record_type not in conf:
+                logger.info(f'Config section {dns_record_type} not found, skipping.')
+                continue
+
+            # Obtain public IP from lookup service
+            service = conf[dns_record_type]['service']
+            try:
+                ip = lookup(dns_record_type, service, conf[dns_record_type]['ip_extract'])
+                logger.info(f'Public {dns_record_type} lookup from {service}: {ip}.')
+            except ValueError as err:
+                logger.error(f'Failed to get public {dns_record_type} from {service}: {str(err)}')
+                continue
+
+            dns_record_ip = dns_record['content']
+            if ip == dns_record_ip and force_update:
+                logger.warning(f'Cloudflare {dns_record_type} record matches; but update forced.')
+            if ip == dns_record_ip and not force_update:
+                logger.info(f'Cloudflare {dns_record_type} record matches; no update required.')
+            else:
+                # Update Cloudflare
+                logger.info(f'Updating Cloudflare {dns_record_type} record ({dns_record_ip}) to: {ip}.')
+                try:
+                    response = session.patch(f'{API_BASE}/zones/{zone_id}/dns_records/{dns_record['id']}',
+                                             headers=headers, json={'content': ip})
+                except requests.exceptions.ConnectionError as err:
+                    logger.error(f'Failed to update {dns_record_type} record: {str(err)}')
+                else:
+                    if response.content:
+                        logger.debug(response.content.decode())
+                    if response.status_code != 200:
+                        logger.error(f'Failed to set DNS entries: error code {response.status_code}.')
+
+        logging.info('Finished loop.')
+        if args.loop_delay and args.loop_delay > 0:
+            logger.info(f'Sleeping for {args.loop_delay} min{'' if args.loop_delay == 1 else 's'}.')
+            time.sleep(60 * args.loop_delay)
+        else:
+            break
+    logger.info('Terminating.')
+    
+    return 0
+
+
+if __name__ == '__main__':
+    exit(main())
