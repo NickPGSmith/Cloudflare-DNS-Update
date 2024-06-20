@@ -1,4 +1,4 @@
-# GoDaddy-DNS-Update
+# Cloudflare-DNS-Update
 
 I am running a home webserver, but my ISP does not offer a static IP allocation: periodically I get a new IP address for my domain I bought through Cloudflare. Cloudflare offers a domain management service via the Web: you can add/remove/update the DNS A/AAAA records for the domains(s) you have bought. They also offer a [REST API](https://developers.cloudflare.com/api/) that can be used to do this programatically.
 
