@@ -31,9 +31,12 @@ Log onto the [Cloudflare dashboard](https://dash.cloudflare.com/), and ensure th
 - force_update: normally no, but "yes" can be used for testing, where and update is performed even if no change is required.
 
 The [ident.me](ident.me) sites are recommended and are set in the service parameter, but any external site can be used as long as it returns an IP. This can be extracted with the ip_extract regex:
-> [A]
-> service = https://v4.ident.me
-> ip_extract = (.*)
+
+...
+[A]
+service = https://v4.ident.me
+ip_extract = (.*)
+...
 
 A symlink can be added so that it is run hourly:
 
@@ -41,5 +44,29 @@ A symlink can be added so that it is run hourly:
 ln -s /root/dnsupdate/dnsupdate /etc/cron.hourly/dnsupdate
 ```
 
-Alernatively, instead of the program checking/updateing once and exiting, it can be run in a loop mode by passing the number of mins of sleep time with the "-l" flag:
-> dnsupdate -l 15
+Alernatively, instead of the program checking/updating once and exiting, it can be run in a loop mode by passing the number of mins of sleep time with the "-l" flag:
+
+...
+dnsupdate -l 15
+...
+
+It may be convenient to run as a systemd service:
+
+Create file /etc/systemd/system/dnsupdate.service:
+
+...
+[Unit]
+Description=Update External DNS
+
+[Service]
+Type=simple
+Restart=always
+ExecStart=/usr/bin/python3 /root/dnsupdate/dnsupdate -l 15
+
+[Install]
+WantedBy=multi-user.target
+...
+systemctl enable dnsupdate
+systemctl start dnsupdate
+
+
