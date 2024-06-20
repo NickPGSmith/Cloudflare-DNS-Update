@@ -27,7 +27,8 @@ chmod 600 dnsupdate.conf
 
 Log onto the [Cloudflare dashboard](https://dash.cloudflare.com/), and ensure that A and/or AAAA records exist for your domain. Update the settings in the configuration file:
 - key: Generate the production API token from the dashboard under Profile -> API Tokens -> Create Token. It should have Zone.DNS permissions.
-- domain: The domain of the A/AAAA records.
+- zone_id: From Cloudflare dashboard -> Overview page, under API section on bottom right.
+- - domain: The domain of the A/AAAA records.
 - force_update: normally no, but "yes" can be used for testing, where and update is performed even if no change is required.
 
 The [ident.me](ident.me) sites are recommended and are set in the service parameter, but any external site can be used as long as it returns an IP. This can be extracted with the ip_extract regex:
