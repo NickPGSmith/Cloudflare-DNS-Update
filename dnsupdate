@@ -11,6 +11,7 @@
 #   -H "Content-Type:application/json" -H "Authorization: Bearer <API_TOKEN>"
 #
 # V0.1      2024-06-14      Updated for use with CloudFlare
+# V0.2      2025-05-04      Updated zone_name -> name
 #
 
 
@@ -24,7 +25,7 @@ import requests
 import time
 
 
-VERSION = '0.1'
+VERSION = '0.2'
 DESCRIPTION = 'Checks the current A and/or AAAA DNS records and uses the ' \
               'Cloudflare REST API to update those records if needed.'
 EPILOG = 'This program is released in the public domain.'
@@ -108,12 +109,12 @@ def main() -> int:
                 dns_records = response.json()['result']
         
         for dns_record in dns_records:
-            logger.debug(f'{dns_record['id']} | {dns_record['type']} | {dns_record['zone_name']} | {dns_record['content']}')
+            logger.debug(f'{dns_record['id']} | {dns_record['type']} | {dns_record['name']} | {dns_record['content']}')
             dns_record_type = dns_record['type']
             if dns_record_type not in ['A', 'AAAA']:
                 continue
-            if dns_record['zone_name'] != domain:
-                logger.info(f'Domain {dns_record['zone_name']} in {dns_record_type} record in does not match {domain}.')
+            if dns_record['name'] != domain:
+                logger.info(f'Domain {dns_record['name']} in {dns_record_type} record in does not match {domain}.')
                 continue
             if dns_record_type not in conf:
                 logger.info(f'Config section {dns_record_type} not found, skipping.')
